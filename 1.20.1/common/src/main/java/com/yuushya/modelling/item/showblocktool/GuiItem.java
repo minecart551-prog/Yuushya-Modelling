@@ -45,11 +45,13 @@ public class GuiItem  extends AbstractToolItem {
                 newBlockState = item.getBlock().defaultBlockState();
             }
         }
+        //副手里是真实方块（不是复制状态的工具）时，新增/替换会消耗它 when the offhand holds a real block item (not the copy tool), adding/replacing consumes it
+        boolean offhandConsumable = player.getOffhandItem().getItem() instanceof BlockItem;
 
         if(blockState.getBlock() instanceof ShowBlock) {
             ShowBlockEntity showBlockEntity = (ShowBlockEntity) level.getBlockEntity(blockPos);
             Minecraft.getInstance().setScreen(
-                    new ShowBlockScreen(showBlockEntity,newBlockState)
+                    new ShowBlockScreen(showBlockEntity,newBlockState,offhandConsumable)
             );
         }
     }

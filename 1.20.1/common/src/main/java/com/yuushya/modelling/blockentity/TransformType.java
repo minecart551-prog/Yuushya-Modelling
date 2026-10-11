@@ -13,7 +13,10 @@ public enum TransformType {
     SHOWN(10),
     LIT(11),
     REMOVE(12),
-    SUCCESS(13), FAIL(14);
+    SUCCESS(13), FAIL(14),
+    REMOVE_SLOT(15),
+    ADD_CONSUME_OFFHAND(16),
+    REPLACE_EXCHANGE_OFFHAND(17);
 
     public final int type;
 
@@ -37,6 +40,9 @@ public enum TransformType {
             case 11 -> LIT;
             case 12 -> REMOVE;
             case 13 -> SUCCESS;
+            case 15 -> REMOVE_SLOT;
+            case 16 -> ADD_CONSUME_OFFHAND;
+            case 17 -> REPLACE_EXCHANGE_OFFHAND;
             default -> FAIL;
         };
     }
@@ -55,7 +61,7 @@ public enum TransformType {
             case SCALE_Z -> transformData.scales.z();
             case BLOCK_STATE -> Block.getId(transformData.blockState);
             case SHOWN -> transformData.isShown ? 1 : 0;
-            case LIT, REMOVE, SUCCESS, FAIL -> 0;
+            case LIT, REMOVE, SUCCESS, FAIL, REMOVE_SLOT, ADD_CONSUME_OFFHAND, REPLACE_EXCHANGE_OFFHAND -> 0;
         };
     }
 
@@ -98,6 +104,24 @@ public enum TransformType {
         }
         if(this == REMOVE){
             showBlockEntity.removeTransformData(slot);
+            return;
+        }
+        if(this == REMOVE_SLOT){
+            showBlockEntity.removeSlotInList(slot);
+            //列表变短后当前层下标可能越界 clamp the current slot after the list shrinks
+            if (showBlockEntity.getSlot() >= showBlockEntity.size()) {
+                showBlockEntity.setSlot(showBlockEntity.size()-1);
+            }
+            return;
+        }
+        //仅消耗副手方块，方块状态由客户端另行写入 only consume the offhand block; the blockstate itself is written by the client separately
+        if(this == ADD_CONSUME_OFFHAND){
+            return;
+        }
+        //用副手方块替换当前层的方块状态，随后由数据包处理器归还旧方块 replace this layer's blockstate with the offhand block; the packet handler returns the old block afterwards
+        if(this == REPLACE_EXCHANGE_OFFHAND){
+            showBlockEntity.setSlot(slot);
+            showBlockEntity.getTransformData(slot).blockState = Block.stateById((int) Math.round(number));
             return;
         }
         showBlockEntity.setSlot(slot);

@@ -7,11 +7,7 @@ allprojects {
     group = rootProject.maven_group
 
     repositories {
-        // Add repositories to retrieve artifacts from in here.
-        // You should only use this when depending on other mods because
         // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
-        // See https://docs.gradle.org/current/userguide/declaring_repositories.html
-        // for more information about repositories.
     }
 
     tasks.withType(JavaCompile) {
@@ -24,65 +20,27 @@ allprojects {
     }
 }
 
-def versions = ['1.16.5','1.18.2','1.19.2','1.19.4','1.20.1','1.20.4','1.20.6','1.21.0'];
-def apis = { ver->
-    if(ver in ['1.20.6','1.21.0']) ['neoforge','fabric']
-    else if(ver == '1.20.4') ['fabric','neoforge']
-    else ['forge','fabric']
+// 1.20.1 Fabric-only convenience tasks.
+
+// Run the client from source:  gradle runClient
+tasks.register("runClient"){
+    dependsOn(":1.20.1:fabric:runClient")
 }
 
-versions.forEach {ver->
-    apis(ver).forEach {api->
-        tasks.register("runClient-${ver}-${api}"){
-            dependsOn(":${ver}:${api}:runClient")
-        }
-        tasks.register("build-jar-${ver}-${api}",Copy){
-            dependsOn(":${ver}:${api}:build")
-            with{
-                from("./${ver}/${api}/build/libs/yuushya-modelling-${mod_version}.jar")
-                rename {"yuushya-modelling-${ver}-${api}-${mod_version}.jar"}
-                into("./build/libs")
-                duplicatesStrategy(DuplicatesStrategy.INHERIT)
-            }
-        }
+// Copy the built Fabric jar into ./build/libs as yuushya-modelling-1.20.1-fabric-<version>.jar
+tasks.register("build-jar",Copy){
+    dependsOn(":1.20.1:fabric:build")
+    with{
+        from("./1.20.1/fabric/build/libs/yuushya-modelling-${mod_version}.jar")
+        rename {"yuushya-modelling-1.20.1-fabric-${mod_version}.jar"}
+        into("./build/libs")
+        duplicatesStrategy(DuplicatesStrategy.INHERIT)
     }
 }
 
-tasks.register("build-jar"){
-    versions.forEach {ver->
-        apis(ver).forEach { api ->
-            dependsOn "build-jar-${ver}-${api}"
-        }
-    }
+// Generate assets/data into 1.20.1/common, then build the Fabric jar.
+// Equivalent to the old test-chain, minus every other version.
+tasks.register("build-1.20.1-fabric"){
+    dependsOn(":common:gen-1.20.1")
+    dependsOn(":1.20.1:fabric:build")
 }
-
-tasks.register("clean-all"){
-    dependsOn(":common:clean")
-    versions.forEach { ver ->
-        (["common"]+apis(ver)).forEach { api ->
-            dependsOn(":${ver}:${api}:clean")
-        }
-    }
-}
-
-def build_tasks = versions.collectMany {ver-> apis(ver).collect {api-> "build-jar-${ver}-${api}"}}
-
-tasks.register("gen-chain"){
-    dependsOn("clean-all")
-    finalizedBy(versions.collect{":common:gen-${it}"})
-}
-
-tasks.register("build-chain1",SequenceTask,build_tasks.subList(0, build_tasks.size()/2 as int))
-tasks.register("build-chain2",SequenceTask,build_tasks.subList(build_tasks.size()/2 as int,build_tasks.size()))
-
-tasks.register("test-chain",SequenceTask,[
-        ":common:clean",
-        ":common:gen-1.20.1",
-        ":1.20.1:fabric:runClient"
-])
-
-tasks.register("build-chain-1.21.0",SequenceTask,[
-        ":common:clean",
-        ":common:gen-1.21.0",
-        "build-jar-1.21.0-neoforge"
-])

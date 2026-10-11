@@ -38,6 +38,11 @@ public interface ITransformDataInventory {
     }
     default void addTransformData(TransformData transformData){getTransformDatas().add(transformData);}
     default void removeTransformData(int slot){getTransformData(slot).set();}
+    //真正地把该层从列表中删除，而不是重置为空气 completely remove the layer from the list
+    default void removeSlotInList(int slot){
+        if (slot>=0 && slot<size()) getTransformDatas().remove(slot);
+        if (getTransformDatas().isEmpty()) getTransformDatas().add(new TransformData());
+    }
     default void removeSlotBlockState(int slot){getTransformData(slot).blockState=Blocks.AIR.defaultBlockState();}
     default void setTransformData(int slot,TransformData transformData){getTransformData(slot).set(transformData);}
     default void setSlotBlockState(int slot,BlockState blockState){getTransformData(slot).blockState=blockState;}

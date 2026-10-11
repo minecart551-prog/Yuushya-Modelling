@@ -11,8 +11,14 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.AirBlock;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 
 import java.util.function.Supplier;
@@ -54,6 +60,48 @@ public class TransformDataNetwork {
                     if(serverLevel.getBlockState(blockPos).getBlock() instanceof ShowBlock){
                         BlockEntity blockEntity = serverLevel.getBlockEntity(blockPos);
                         if (!(blockEntity instanceof ShowBlockEntity showBlockEntity)) {return;}
+                        Player player = ctx.get().getPlayer();
+                        //删除层时把该层的方块还给非创造模式玩家 return the layer's block to non-creative players
+                        if (transformType == TransformType.REMOVE_SLOT && !player.isCreative()) {
+                            BlockState removedState = showBlockEntity.getTransformData(slot).blockState;
+                            if (!(removedState.getBlock() instanceof AirBlock)) {
+                                ItemStack stack = new ItemStack(removedState.getBlock().asItem());
+                                if (!stack.isEmpty()) {
+                                    player.getInventory().placeItemBackInInventory(stack);
+                                }
+                            }
+                        }
+                        //从副手新增层时消耗副手里对应的方块 consume the matching offhand block when a layer is added from it
+                        if (transformType == TransformType.ADD_CONSUME_OFFHAND && !player.isCreative()) {
+                            ItemStack offhand = player.getOffhandItem();
+                            if (offhand.getItem() instanceof BlockItem blockItem
+                                    && blockItem.getBlock() == Block.stateById((int) Math.round(number)).getBlock()) {
+                                offhand.shrink(1);
+                            }
+                        }
+                        //用副手方块替换当前层：归还旧方块并消耗副手方块（新方块状态由 modify 原子应用）
+                        //空手替换为空气时同样归还旧方块，但不消耗任何物品
+                        //replace the current layer with the offhand block: hand the old block back and consume
+                        //the offhand one (the new blockstate itself is applied atomically by modify below).
+                        //an empty-hand replace (target = air) returns the old block without consuming anything
+                        if (transformType == TransformType.REPLACE_EXCHANGE_OFFHAND && !player.isCreative()) {
+                            BlockState newState = Block.stateById((int) Math.round(number));
+                            boolean targetIsAir = newState.getBlock() instanceof AirBlock;
+                            ItemStack offhand = player.getOffhandItem();
+                            if (targetIsAir || (offhand.getItem() instanceof BlockItem blockItem
+                                    && blockItem.getBlock() == newState.getBlock())) {
+                                if (!targetIsAir) {
+                                    offhand.shrink(1);
+                                }
+                                BlockState oldState = showBlockEntity.getTransformData(slot).blockState;
+                                if (!(oldState.getBlock() instanceof AirBlock)) {
+                                    ItemStack stack = new ItemStack(oldState.getBlock().asItem());
+                                    if (!stack.isEmpty()) {
+                                        player.getInventory().placeItemBackInInventory(stack);
+                                    }
+                                }
+                            }
+                        }
                         transformType.modify(showBlockEntity,slot,number);
                     }
                 }

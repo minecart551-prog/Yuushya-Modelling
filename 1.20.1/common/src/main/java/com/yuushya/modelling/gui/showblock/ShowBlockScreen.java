@@ -46,6 +46,8 @@ import static com.yuushya.modelling.item.showblocktool.PosTransItem.getStep;
 public class ShowBlockScreen extends Screen {
     private final ShowBlockEntity blockEntity;
     private final BlockState newBlockState;
+    //副手里是否为真实方块（而非复制状态的工具）whether the offhand holds a real block item (not the copy-state tool)
+    private final boolean offhandConsumable;
     private int slot;
     public void setSlot(int slot){
         for(TransformType key:this.storage.keySet()){
@@ -177,10 +179,11 @@ public class ShowBlockScreen extends Screen {
         return blockEntity.getTransformData(slot).blockState;
     }
 
-    public ShowBlockScreen(ShowBlockEntity blockEntity, BlockState newBlockState) {
+    public ShowBlockScreen(ShowBlockEntity blockEntity, BlockState newBlockState, boolean offhandConsumable) {
         super(GameNarrator.NO_TITLE);
         this.blockEntity = blockEntity;
         this.newBlockState = newBlockState;
+        this.offhandConsumable = offhandConsumable;
         if(blockEntity.getSlot() < blockEntity.getTransformDatas().size()){
             this.slot = blockEntity.getSlot();
         }
@@ -220,6 +223,10 @@ public class ShowBlockScreen extends Screen {
                                 blockStateList.addSlot();
                                 updateTransformData(BLOCK_STATE,(double) Block.getId(this.newBlockState));
                                 updateTransformData(SHOWN,1.0);
+                                //从副手新增层时消耗副手方块 consume the offhand block when a layer is added from it
+                                if(offhandConsumable){
+                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, ADD_CONSUME_OFFHAND, (double) Block.getId(this.newBlockState));
+                                }
                                 updateStateButtonVisible(true);
                             }
                         })
@@ -227,7 +234,19 @@ public class ShowBlockScreen extends Screen {
                 .bounds(RIGHT_COLUMN_X,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
         removeStateButton = Button.builder(Component.literal("×"),
                         (btn)->{
-                            updateTransformData(REMOVE,0.0);
+                            int removeSlot = this.slot;
+                            //该层的待写入修改随层一起作废 pending edits belong to the layer being removed
+                            this.storage.clear();
+                            //真正地从列表中删除该层 completely remove the layer from the list
+                            blockEntity.removeSlotInList(removeSlot);
+                            //列表下标会移动，所以立即发送给服务端 indices shift, so sync immediately
+                            TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), removeSlot, REMOVE_SLOT, 0.0);
+                            TransformDataNetwork.sendToServerSideSuccess(blockEntity.getBlockPos());
+                            //刷新左侧列表并选中一个合法的新层 refresh the list and select a valid slot
+                            blockStateList.clearChosen();
+                            blockStateList.updateRenderList();
+                            int nextSlot = Math.min(removeSlot, blockEntity.getTransformDatas().size()-1);
+                            blockStateList.setSelectedSlot(nextSlot);
                             updateStateButtonVisible(true);
                         }
                 )
@@ -241,6 +260,10 @@ public class ShowBlockScreen extends Screen {
                                 updateStateButtonVisible(true);
                             }
                             else{
+                                //空手点击替换：把该层换成空气并收回原方块；副手有方块则消耗它 an empty-hand replace swaps the layer to air and returns the old block; a real offhand block is consumed instead
+                                if(offhandConsumable || this.newBlockState==null){
+                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, this.newBlockState==null ? 0.0 : (double) Block.getId(this.newBlockState));
+                                }
                                 updateTransformData(BLOCK_STATE,(double) Block.getId(this.newBlockState));
                                 updateStateButtonVisible(true);
                             }

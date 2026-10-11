@@ -66,7 +66,7 @@ subprojects {
         it.options.release = 17
     }
 
-    def resourceTargets=["fabric.mod.json",'quilt.mod.json','META-INF/mods.toml'];
+    def resourceTargets=["fabric.mod.json"];
     def replaceProperties = [
             mod_name: mod_name,
             mod_version: mod_version,
