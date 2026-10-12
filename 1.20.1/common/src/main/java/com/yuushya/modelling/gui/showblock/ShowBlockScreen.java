@@ -32,6 +32,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.util.StringRepresentable;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
@@ -189,6 +191,16 @@ public class ShowBlockScreen extends Screen {
         }
     }
 
+    //点击时实时读取副手，而非 GUI 打开时的快照（快照在消耗后会过期） read the offhand live at click time rather than the GUI-open snapshot (which goes stale after a consume)
+    private BlockState liveOffhandBlockState(){
+        if(this.minecraft == null || this.minecraft.player == null) return null;
+        ItemStack off = this.minecraft.player.getOffhandItem();
+        if(off.getItem() instanceof BlockItem item){
+            return item.getBlock().defaultBlockState();
+        }
+        return null;
+    }
+
     private int leftColumnX(){ return this.width/4*3 + 10; }
     private int leftColumnWidth(){ return this.width/4 - 20; }
     private static final int TOP = 10;
@@ -220,12 +232,16 @@ public class ShowBlockScreen extends Screen {
                                 updateStateButtonVisible(true);
                             }
                             else if(this.newBlockState!=null){
+                                //副手来源须在点击时仍持有该方块，否则不新增（快照过期会凭空新增） an offhand-sourced block must still be held at click time, else don't add (a stale snapshot would add for free)
+                                BlockState add = offhandConsumable ? liveOffhandBlockState() : this.newBlockState;
+                                if(add == null){
+                                    return; //副手已空：不凭旧快照新增 the offhand is empty: don't add from the stale snapshot
+                                }
                                 blockStateList.addSlot();
-                                updateTransformData(BLOCK_STATE,(double) Block.getId(this.newBlockState));
+                                updateTransformData(BLOCK_STATE,(double) Block.getId(add));
                                 updateTransformData(SHOWN,1.0);
-                                //从副手新增层时消耗副手方块 consume the offhand block when a layer is added from it
                                 if(offhandConsumable){
-                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, ADD_CONSUME_OFFHAND, (double) Block.getId(this.newBlockState));
+                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, ADD_CONSUME_OFFHAND, (double) Block.getId(add));
                                 }
                                 updateStateButtonVisible(true);
                             }
@@ -235,7 +251,12 @@ public class ShowBlockScreen extends Screen {
         removeStateButton = Button.builder(Component.literal("×"),
                         (btn)->{
                             int removeSlot = this.slot;
-                            //该层的待写入修改随层一起作废 pending edits belong to the layer being removed
+                            //先补发该层尚未同步的修改（如刚新增层的 BLOCK_STATE），服务端列表和方块状态才能与客户端对齐
+                            //flush the layer's pending edits (e.g. a just-added layer's BLOCK_STATE) first so the
+                            //server's list and blockstate match the client before the removal is processed
+                            for(TransformType key:this.storage.keySet()){
+                                TransformDataNetwork.sendToServerSide(this.blockEntity.getBlockPos(),removeSlot, key,this.storage.get(key));
+                            }
                             this.storage.clear();
                             //真正地从列表中删除该层 completely remove the layer from the list
                             blockEntity.removeSlotInList(removeSlot);
@@ -260,11 +281,28 @@ public class ShowBlockScreen extends Screen {
                                 updateStateButtonVisible(true);
                             }
                             else{
-                                //空手点击替换：把该层换成空气并收回原方块；副手有方块则消耗它 an empty-hand replace swaps the layer to air and returns the old block; a real offhand block is consumed instead
-                                if(offhandConsumable || this.newBlockState==null){
-                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, this.newBlockState==null ? 0.0 : (double) Block.getId(this.newBlockState));
+                                if(offhandConsumable){
+                                    //点击时实时读取副手，快照可能已过期（方块已被消耗） read the offhand live at click time; the snapshot may be stale (block already consumed)
+                                    BlockState live = liveOffhandBlockState();
+                                    if(live == null){
+                                        //副手已空：视为空手替换，换成空气并收回原方块 offhand now empty: treat as an empty-hand replace, swap to air and return the old block
+                                        TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, 0.0);
+                                        updateTransformData(BLOCK_STATE,0.0);
+                                    }
+                                    else{
+                                        TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, (double) Block.getId(live));
+                                        updateTransformData(BLOCK_STATE,(double) Block.getId(live));
+                                    }
                                 }
-                                updateTransformData(BLOCK_STATE,(double) Block.getId(this.newBlockState));
+                                else if(this.newBlockState==null){
+                                    //空手打开 GUI：替换为空气并收回原方块 GUI opened with an empty hand: replace to air and return the old block
+                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, 0.0);
+                                    updateTransformData(BLOCK_STATE,0.0);
+                                }
+                                else{
+                                    //复制状态的工具：直接替换，不交换（工具不被消耗） copy-state tool: replace directly with no exchange (the tool isn't consumed)
+                                    updateTransformData(BLOCK_STATE,(double) Block.getId(this.newBlockState));
+                                }
                                 updateStateButtonVisible(true);
                             }
                         }
