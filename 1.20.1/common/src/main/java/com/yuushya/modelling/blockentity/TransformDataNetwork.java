@@ -11,6 +11,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
@@ -66,9 +67,7 @@ public class TransformDataNetwork {
                             BlockState removedState = showBlockEntity.getTransformData(slot).blockState;
                             if (!(removedState.getBlock() instanceof AirBlock)) {
                                 ItemStack stack = new ItemStack(removedState.getBlock().asItem());
-                                if (!stack.isEmpty()) {
-                                    player.getInventory().placeItemBackInInventory(stack);
-                                }
+                                giveBackToOffhandOrInventory(player, stack);
                             }
                         }
                         //从副手新增层时消耗副手里对应的方块 consume the matching offhand block when a layer is added from it
@@ -96,9 +95,7 @@ public class TransformDataNetwork {
                                 BlockState oldState = showBlockEntity.getTransformData(slot).blockState;
                                 if (!(oldState.getBlock() instanceof AirBlock)) {
                                     ItemStack stack = new ItemStack(oldState.getBlock().asItem());
-                                    if (!stack.isEmpty()) {
-                                        player.getInventory().placeItemBackInInventory(stack);
-                                    }
+                                    giveBackToOffhandOrInventory(player, stack);
                                 }
                             }
                         }
@@ -109,6 +106,30 @@ public class TransformDataNetwork {
         }
     }
 
+
+    //归还物品时优先放入副手，副手满或不同物时才回主物品栏 return items to the offhand first; fall back to the main inventory only when the offhand is full or holds a different item
+    private static void giveBackToOffhandOrInventory(Player player, ItemStack stack){
+        if(stack.isEmpty()){ return; }
+        ItemStack offhand = player.getOffhandItem();
+        if(offhand.isEmpty()){
+            //副手为空：直接占用副手 the offhand is empty: take it
+            player.setItemInHand(InteractionHand.OFF_HAND, stack);
+            return;
+        }
+        if(ItemStack.isSameItemSameTags(offhand, stack)){
+            //同种物品且未满：并入副手 merge into the offhand when it's the same item and not full
+            int space = offhand.getMaxStackSize() - offhand.getCount();
+            if(space > 0){
+                int moved = Math.min(space, stack.getCount());
+                offhand.grow(moved);
+                stack.shrink(moved);
+            }
+        }
+        //副手已满/不同物：余量回主物品栏 whatever remains goes to the main inventory
+        if(!stack.isEmpty()){
+            player.getInventory().placeItemBackInInventory(stack);
+        }
+    }
 
     public static void sendToServerSide(BlockPos blockPos, int slot, TransformType type, double number) {
         INSTANCE.sendToServer(new TransformDataOncePacket(blockPos,type,slot,number));
