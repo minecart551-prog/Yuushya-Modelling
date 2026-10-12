@@ -4,6 +4,8 @@ import com.mojang.logging.LogUtils;
 import com.yuushya.modelling.Yuushya;
 import com.yuushya.modelling.blockentity.showblock.ShowBlock;
 import com.yuushya.modelling.blockentity.showblock.ShowBlockEntity;
+import com.yuushya.modelling.utils.ShareApplyUtils;
+import com.yuushya.modelling.utils.ShareUtils;
 import dev.architectury.networking.NetworkChannel;
 import dev.architectury.networking.NetworkManager;
 import io.netty.buffer.Unpooled;
@@ -14,6 +16,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.AirBlock;
@@ -22,6 +25,8 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 
+import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 public class TransformDataNetwork {
@@ -108,7 +113,7 @@ public class TransformDataNetwork {
 
 
     //归还物品时优先放入副手，副手满或不同物时才回主物品栏 return items to the offhand first; fall back to the main inventory only when the offhand is full or holds a different item
-    private static void giveBackToOffhandOrInventory(Player player, ItemStack stack){
+    public static void giveBackToOffhandOrInventory(Player player, ItemStack stack){
         if(stack.isEmpty()){ return; }
         ItemStack offhand = player.getOffhandItem();
         if(offhand.isEmpty()){
@@ -131,6 +136,58 @@ public class TransformDataNetwork {
         }
     }
 
+    //应用共享码：服务端权威结算（扣背包、回收旧层、建层、报告缺失） apply a share code: authoritative settlement on the server (consume inventory, recycle old layers, build, report missing)
+    public record ApplySharePacket(BlockPos blockPos, String shareCode){
+        public static ApplySharePacket decoder(FriendlyByteBuf buf){
+            return new ApplySharePacket(buf.readBlockPos(), buf.readUtf(1048576));
+        }
+        public void encoder(FriendlyByteBuf buf){
+            buf.writeBlockPos(blockPos);
+            buf.writeUtf(shareCode, 1048576);
+        }
+        public void handler(Supplier<NetworkManager.PacketContext> ctx){
+            ctx.get().queue(() -> applyShare(ctx.get().getPlayer(), blockPos, shareCode));
+        }
+    }
+
+    //服务端：按共享码重建层列表，扣费并归还余量，最后用聊天报告缺失 the server rebuilds the layer list from the share code, charges the cost, returns leftovers, then reports missing blocks in chat
+    public static void applyShare(Player player, BlockPos blockPos, String shareCode){
+        if(player == null) return;
+        Level level = player.level();
+        if(!(level instanceof ServerLevel serverLevel) || !serverLevel.hasChunkAt(blockPos)) return;
+        if(!(serverLevel.getBlockState(blockPos).getBlock() instanceof ShowBlock)) return;
+        if(!(serverLevel.getBlockEntity(blockPos) instanceof ShowBlockEntity showBlockEntity)) return;
+        ShareUtils.ShareInformation shareInformation;
+        try {
+            shareInformation = ShareUtils.from(shareCode);
+        } catch (Exception e) {
+            return;
+        }
+        boolean creative = player.isCreative();
+        ShareApplyUtils.ApplyResult result = ShareApplyUtils.computeApply(shareInformation, showBlockEntity.getTransformDatas(), player, creative);
+        //资源池剩余归还（副手优先） return whatever is left in the pool (offhand first)
+        if(!creative){
+            for(Map.Entry<Item, Integer> e : result.leftover().entrySet()){
+                if(e.getValue() > 0) giveBackToOffhandOrInventory(player, new ItemStack(e.getKey(), e.getValue()));
+            }
+        }
+        //重建层列表 rebuild the layer list
+        List<TransformData> datas = showBlockEntity.getTransformDatas();
+        datas.clear();
+        datas.addAll(result.built());
+        showBlockEntity.setSlot(0);
+        showBlockEntity.saveChanged();
+        //聊天报告缺失 report missing blocks in chat
+        if(!creative && !result.missing().isEmpty()){
+            player.displayClientMessage(ShareApplyUtils.missingMessage(result.missing()), false);
+        }
+    }
+
+    //客户端请求应用共享码 client requests to apply a share code
+    public static void sendApplyShare(BlockPos blockPos, String shareCode){
+        INSTANCE.sendToServer(new ApplySharePacket(blockPos, shareCode));
+    }
+
     public static void sendToServerSide(BlockPos blockPos, int slot, TransformType type, double number) {
         INSTANCE.sendToServer(new TransformDataOncePacket(blockPos,type,slot,number));
     }
@@ -141,6 +198,7 @@ public class TransformDataNetwork {
 
     public static void registerChannel(){
         INSTANCE.register(TransformDataOncePacket.class,TransformDataOncePacket::encoder,TransformDataOncePacket::decoder,TransformDataOncePacket::handler);
+        INSTANCE.register(ApplySharePacket.class,ApplySharePacket::encoder,ApplySharePacket::decoder,ApplySharePacket::handler);
     }
 
     //architectury提供的另一种风格的api

@@ -12,6 +12,7 @@ import com.yuushya.modelling.gui.validate.DividedDoubleRange;
 import com.yuushya.modelling.gui.validate.DoubleRange;
 import com.yuushya.modelling.gui.validate.LazyDoubleRange;
 import com.yuushya.modelling.item.YuushyaDebugStickItem;
+import com.yuushya.modelling.utils.ShareApplyUtils;
 import com.yuushya.modelling.utils.ShareUtils;
 import dev.architectury.platform.Platform;
 import net.minecraft.ChatFormatting;
@@ -341,7 +342,26 @@ public class ShowBlockScreen extends Screen {
                             try {
                                 ShareUtils.ShareInformation shareInformation = ShareUtils.from(string);
                                 checkModLack(shareInformation);
-                                updateAllTransformData(shareInformation);
+                                //客户端先本地试算并重建层以即时刷新界面 optimistic local compute + rebuild for instant feedback
+                                boolean creative = this.minecraft.player == null || this.minecraft.player.isCreative();
+                                ShareApplyUtils.ApplyResult result = ShareApplyUtils.computeApply(
+                                        shareInformation, blockEntity.getTransformDatas(), this.minecraft.player, creative);
+                                if(!creative && this.minecraft.player != null){
+                                    for(var e : result.leftover().entrySet()){
+                                        if(e.getValue() > 0) TransformDataNetwork.giveBackToOffhandOrInventory(this.minecraft.player, new ItemStack(e.getKey(), e.getValue()));
+                                    }
+                                }
+                                List<TransformData> dataList = blockEntity.getTransformDatas();
+                                BlockPos pos = blockEntity.getBlockPos();
+                                dataList.clear();
+                                dataList.addAll(result.built());
+                                this.storage.clear();
+                                this.slot = 0;
+                                blockEntity.setSlot(0);
+                                this.blockEntity.getLevel().sendBlockUpdated(pos, blockEntity.getBlockState(), blockEntity.getBlockState(), Block.UPDATE_ALL_IMMEDIATE);
+                                this.blockStateList.updateRenderList();
+                                //服务端权威结算：扣背包并用聊天报告缺失 authoritative settlement on the server: consume inventory and report missing blocks in chat
+                                TransformDataNetwork.sendApplyShare(pos, string);
                                 updateStateButtonVisible(true);
                                 this.minecraft.getToasts().addToast(
                                         new SystemToast(SystemToast.SystemToastIds.TUTORIAL_HINT,Component.translatable("gui.showBlockScreen.workshop.paste_pass"),null)
@@ -607,31 +627,6 @@ public class ShowBlockScreen extends Screen {
         Minecraft.getInstance().getToasts().addToast(
                 SystemToast.multiline(Minecraft.getInstance(), SystemToast.SystemToastIds.PACK_LOAD_FAILURE, Component.literal("Mod Lack"), Component.literal(String.join(", ",unLoaded)))
         );
-    }
-
-    private void updateAllTransformData(ShareUtils.ShareInformation shareInformation){
-        List<TransformData> dataList = blockEntity.getTransformDatas();
-        BlockPos pos = blockEntity.getBlockPos();
-        int currentSize = dataList.size();
-        for(int slot=0;slot<currentSize;slot++){
-            blockEntity.removeTransformData(slot);
-            TransformDataNetwork.sendToServerSide(pos,slot, REMOVE, 0.0);
-        }
-
-        shareInformation.transfer(dataList);
-
-        int nextSize = dataList.size();
-        this.blockEntity.getLevel().sendBlockUpdated(pos, blockEntity.getBlockState(), blockEntity.getBlockState(), Block.UPDATE_ALL_IMMEDIATE);
-        this.storage.clear();
-        for(int slot=0;slot<nextSize;slot++){
-            TransformData data = dataList.get(slot);
-            updateTransformDataServerImmediate(data,slot);
-        }
-        TransformDataNetwork.sendToServerSideSuccess(pos);
-        for(int slot = nextSize-1;slot<currentSize;slot++){
-            blockEntity.setSlot(slot);
-        }
-        this.blockStateList.updateRenderList();
     }
 
     private void updateTransformDataServerImmediate(TransformData data,int slot){
