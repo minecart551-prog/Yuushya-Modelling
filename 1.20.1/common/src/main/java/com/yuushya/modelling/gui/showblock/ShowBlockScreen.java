@@ -52,6 +52,8 @@ public class ShowBlockScreen extends Screen {
     //副手里是否为真实方块（而非复制状态的工具）whether the offhand holds a real block item (not the copy-state tool)
     private final boolean offhandConsumable;
     private int slot;
+    //当前选中的物品栏槽位（-1 表示未选中，使用副手） the currently selected inventory hotbar slot (-1 = none, use offhand)
+    private int selectedHotbarSlot = -1;
     public void setSlot(int slot){
         for(TransformType key:this.storage.keySet()){
             TransformDataNetwork.sendToServerSide(this.blockEntity.getBlockPos(),this.slot, key,this.storage.get(key));
@@ -153,6 +155,7 @@ public class ShowBlockScreen extends Screen {
     private CycleButton<Mode> modeButton;
     private Button addStateButton;
     private Button removeStateButton;
+    private Button duplicateButton;
     private Button replaceButton;
     private Button copyButton;
     private Button parseButton;
@@ -224,12 +227,18 @@ public class ShowBlockScreen extends Screen {
     protected void init() {
         addStateButton = Button.builder(Component.literal("+"),
                         (btn)->{
-                            int chosen = this.blockStateList.getChosenOne();
-                            if(chosen!=-1){
-                                blockStateList.addSlot();
-                                blockEntity.getTransformDatas().add(new TransformData());
-                                updateTransformDataServerImmediate(blockEntity.getTransformData(chosen),slot);
-                                TransformDataNetwork.sendToServerSideSuccess(blockEntity.getBlockPos());
+                            if(selectedHotbarSlot >= 0){
+                                //从选中的物品栏槽位新增层 add a layer from the selected inventory slot
+                                BlockState add = liveSlotBlockState(selectedHotbarSlot);
+                                if(add == null){
+                                    return; //槽位为空/非方块：不新增 do nothing if the slot is empty or holds a non-block
+                                }
+                                if(!blockStateList.addSlot()){
+                                    return;
+                                }
+                                updateTransformData(BLOCK_STATE,(double) Block.getId(add));
+                                updateTransformData(SHOWN,1.0);
+                                TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, ADD_CONSUME_OFFHAND, (double) Block.getId(add), selectedHotbarSlot);
                                 updateStateButtonVisible(true);
                             }
                             else if(this.newBlockState!=null){
@@ -238,7 +247,9 @@ public class ShowBlockScreen extends Screen {
                                 if(add == null){
                                     return; //副手已空：不凭旧快照新增 the offhand is empty: don't add from the stale snapshot
                                 }
-                                blockStateList.addSlot();
+                                if(!blockStateList.addSlot()){
+                                    return;
+                                }
                                 updateTransformData(BLOCK_STATE,(double) Block.getId(add));
                                 updateTransformData(SHOWN,1.0);
                                 if(offhandConsumable){
@@ -262,10 +273,9 @@ public class ShowBlockScreen extends Screen {
                             //真正地从列表中删除该层 completely remove the layer from the list
                             blockEntity.removeSlotInList(removeSlot);
                             //列表下标会移动，所以立即发送给服务端 indices shift, so sync immediately
-                            TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), removeSlot, REMOVE_SLOT, 0.0);
+                            TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), removeSlot, REMOVE_SLOT, 0.0, selectedHotbarSlot);
                             TransformDataNetwork.sendToServerSideSuccess(blockEntity.getBlockPos());
                             //刷新左侧列表并选中一个合法的新层 refresh the list and select a valid slot
-                            blockStateList.clearChosen();
                             blockStateList.updateRenderList();
                             int nextSlot = Math.min(removeSlot, blockEntity.getTransformDatas().size()-1);
                             blockStateList.setSelectedSlot(nextSlot);
@@ -274,42 +284,90 @@ public class ShowBlockScreen extends Screen {
                 )
                 .tooltip(Tooltip.create(Component.translatable("gui.showBlockScreen.display.remove")))
                 .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
-        replaceButton = Button.builder(Component.literal("⇄"),
+        duplicateButton = Button.builder(Component.literal("⧉"),
                         (btn)->{
-                            int chosen = this.blockStateList.getChosenOne();
-                            if(chosen!=-1&&chosen!=slot){
-                                updateTransformData(BLOCK_STATE,(double) Block.getId(blockEntity.getTransformData(chosen).blockState));
-                                updateStateButtonVisible(true);
+                            int source = this.slot;
+                            TransformData srcData = new TransformData();
+                            srcData.set(blockEntity.getTransformData(source));
+                            if(srcData.blockState.getBlock() instanceof net.minecraft.world.level.block.AirBlock){
+                                return; //不复制空气层 don't duplicate an air layer
                             }
-                            else{
-                                if(offhandConsumable){
-                                    //点击时实时读取副手，快照可能已过期（方块已被消耗） read the offhand live at click time; the snapshot may be stale (block already consumed)
-                                    BlockState live = liveOffhandBlockState();
-                                    if(live == null){
-                                        //副手已空：视为空手替换，换成空气并收回原方块 offhand now empty: treat as an empty-hand replace, swap to air and return the old block
-                                        TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, 0.0);
-                                        updateTransformData(BLOCK_STATE,0.0);
+                            boolean creative = this.minecraft.player != null && this.minecraft.player.isCreative();
+                            if(!creative){
+                                net.minecraft.world.item.Item required = srcData.blockState.getBlock().asItem();
+                                if(required != net.minecraft.world.item.Items.AIR){
+                                    boolean has = false;
+                                    if(this.minecraft.player != null){
+                                        for(ItemStack st : this.minecraft.player.getInventory().items){
+                                            if(!st.isEmpty() && st.getItem() == required){ has = true; break; }
+                                        }
                                     }
-                                    else{
-                                        TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, (double) Block.getId(live));
-                                        updateTransformData(BLOCK_STATE,(double) Block.getId(live));
+                                    if(!has){
+                                        if(this.minecraft.player != null){
+                                            this.minecraft.player.displayClientMessage(
+                                                    Component.literal("Need ").append(required.getDefaultInstance().getHoverName())
+                                                            .append(Component.literal(" to duplicate")), false);
+                                        }
+                                        return;
                                     }
                                 }
-                                else if(this.newBlockState==null){
-                                    //空手打开 GUI：替换为空气并收回原方块 GUI opened with an empty hand: replace to air and return the old block
+                            }
+                            if(!blockStateList.addSlot()){
+                                return;
+                            }
+                            int newIdx = blockEntity.getTransformDatas().size() - 1;
+                            blockEntity.getTransformDatas().set(newIdx, srcData);
+                            blockStateList.setSelectedSlot(newIdx);
+                            TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), source, TransformType.DUPLICATE_SLOT, 0.0, selectedHotbarSlot);
+                            updateStateButtonVisible(true);
+                        })
+                .tooltip(Tooltip.create(Component.translatable("gui.showBlockScreen.display.duplicate")))
+                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*2,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
+        replaceButton = Button.builder(Component.literal("⇄"),
+                        (btn)->{
+                            if(selectedHotbarSlot >= 0){
+                                //从选中的物品栏槽位替换 exchange with the selected inventory slot
+                                BlockState live = liveSlotBlockState(selectedHotbarSlot);
+                                if(live == null){
+                                    //槽位为空/非方块：视为空手替换，换成空气并收回原方块 selected slot empty/non-block: treat as an empty-hand replace, swap to air and return the old block
+                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, 0.0, selectedHotbarSlot);
+                                    updateTransformData(BLOCK_STATE,0.0);
+                                }
+                                else{
+                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, (double) Block.getId(live), selectedHotbarSlot);
+                                    updateTransformData(BLOCK_STATE,(double) Block.getId(live));
+                                }
+                                updateStateButtonVisible(true);
+                            }
+                            else if(offhandConsumable){
+                                //点击时实时读取副手，快照可能已过期（方块已被消耗） read the offhand live at click time; the snapshot may be stale (block already consumed)
+                                BlockState live = liveOffhandBlockState();
+                                if(live == null){
+                                    //副手已空：视为空手替换，换成空气并收回原方块 offhand now empty: treat as an empty-hand replace, swap to air and return the old block
                                     TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, 0.0);
                                     updateTransformData(BLOCK_STATE,0.0);
                                 }
                                 else{
-                                    //复制状态的工具：直接替换，不交换（工具不被消耗） copy-state tool: replace directly with no exchange (the tool isn't consumed)
-                                    updateTransformData(BLOCK_STATE,(double) Block.getId(this.newBlockState));
+                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, (double) Block.getId(live));
+                                    updateTransformData(BLOCK_STATE,(double) Block.getId(live));
                                 }
+                                updateStateButtonVisible(true);
+                            }
+                            else if(this.newBlockState==null){
+                                //空手打开 GUI：替换为空气并收回原方块 GUI opened with an empty hand: replace to air and return the old block
+                                TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, 0.0);
+                                updateTransformData(BLOCK_STATE,0.0);
+                                updateStateButtonVisible(true);
+                            }
+                            else{
+                                //复制状态的工具：直接替换，不交换（工具不被消耗） copy-state tool: replace directly with no exchange (the tool isn't consumed)
+                                updateTransformData(BLOCK_STATE,(double) Block.getId(this.newBlockState));
                                 updateStateButtonVisible(true);
                             }
                         }
                 )
                 .tooltip(Tooltip.create(Component.translatable("gui.showBlockScreen.display.replace")))
-                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH+RIGHT_BAR_WIDTH,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
+                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*3,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
 
         shownStateButton = CycleButton.<Boolean>booleanBuilder(
                         Component.literal("\uD83D\uDD76"),//Component.translatable("gui.showBlockScreen.display.on"),
@@ -317,7 +375,7 @@ public class ShowBlockScreen extends Screen {
                 .displayOnlyValue()
                 .withInitialValue(true)
                 .withTooltip((on)-> Tooltip.create(on? Component.translatable("gui.showBlockScreen.display.on"):Component.translatable("gui.showBlockScreen.display.off")))
-                .create(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH+RIGHT_BAR_WIDTH+RIGHT_BAR_WIDTH,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT,Component.empty(),
+                .create(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*4,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT,Component.empty(),
                         (btn,bl)->{
                             updateTransformData(SHOWN,bl?1.0:0.0);
                         }
@@ -334,7 +392,7 @@ public class ShowBlockScreen extends Screen {
                         }
                 )
                 .tooltip(Tooltip.create(Component.translatable("gui.showBlockScreen.workshop.copy")))
-                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*3+40,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
+                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*4+40,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
 
         parseButton = Button.builder(Component.literal("\uD83D\uDCE5").withStyle(ChatFormatting.BOLD),//Component.translatable("gui.showBlockScreen.workshop.paste"),
                         (btn)->{
@@ -374,7 +432,7 @@ public class ShowBlockScreen extends Screen {
                         }
                 )
                 .tooltip(Tooltip.create(Component.translatable("gui.showBlockScreen.workshop.paste")))
-                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*3+60,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
+                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*4+60,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
 
         saveButton = Button.builder(Component.literal("\uD83D\uDCBE").withStyle(ChatFormatting.BOLD),
                         (btn)->{
@@ -405,7 +463,7 @@ public class ShowBlockScreen extends Screen {
                         }
                 )
                 .tooltip(Tooltip.create(Component.translatable("gui.showBlockScreen.workshop.save")))
-                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*4+60,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
+                .bounds(RIGHT_COLUMN_X+RIGHT_BAR_WIDTH*5+60,TOP,RIGHT_BAR_WIDTH,PER_HEIGHT).build();
 
         blockStateList =  new BlockStateIconList(this.minecraft,RIGHT_LIST_WIDTH ,RIGHT_LIST_HEIGHT ,RIGHT_COLUMN_X,RIGHT_LIST_TOP,RIGHT_LIST_BOTTOM , RIGHT_LIST_WIDTH,RIGHT_LIST_PER_HEIGHT,this.blockEntity.getTransformDatas(),this);
 
@@ -562,6 +620,7 @@ public class ShowBlockScreen extends Screen {
         this.addWidget(this.blockStateList);
         this.addRenderableWidget(addStateButton);
         this.addRenderableWidget(removeStateButton);
+        this.addRenderableWidget(duplicateButton);
         this.addRenderableWidget(replaceButton);
         this.addRenderableWidget(shownStateButton);
         this.addRenderableWidget(leftPropertyButton);
@@ -595,6 +654,32 @@ public class ShowBlockScreen extends Screen {
                 component.editBox.render(guiGraphics,mouseX,mouseY,partialTick);
             }
         }
+        //渲染与原版一致的物品栏热键栏（用于 +/×/⇄ 的来源/去向） render the hotbar matching vanilla's geometry (source/target for +/×/⇄)
+        int hx = (this.width - 182) / 2;
+        int hy = this.height - 22;
+        net.minecraft.resources.ResourceLocation widgets = new net.minecraft.resources.ResourceLocation("textures/gui/widgets.png");
+        //原版热键栏底图 vanilla hotbar background
+        guiGraphics.blit(widgets, hx, hy, 0, 0, 182, 22);
+        //选中槽高亮 vanilla selection highlight
+        if (selectedHotbarSlot >= 0) {
+            guiGraphics.blit(widgets, hx - 1 + selectedHotbarSlot * 20, hy - 1, 0, 22, 24, 22);
+        }
+        //悬停高亮 hover highlight
+        int hovered = slotAt(mouseX, mouseY);
+        if (hovered >= 0 && hovered != selectedHotbarSlot) {
+            guiGraphics.fill(hx + hovered * 20 + 1, hy + 1, hx + hovered * 20 + 19, hy + 21, 0x40FFFFFF);
+        }
+        //物品图标 item icons
+        for (int i = 0; i < 9; i++) {
+            ItemStack stack = (this.minecraft != null && this.minecraft.player != null)
+                    ? this.minecraft.player.getInventory().getItem(i) : ItemStack.EMPTY;
+            if (!stack.isEmpty()) {
+                int ix = hx + 3 + i * 20 + 1; // vanilla item offset
+                int iy = hy + 3;
+                guiGraphics.renderItem(stack, ix, iy);
+                guiGraphics.renderItemDecorations(this.font, stack, ix, iy);
+            }
+        }
         super.render(guiGraphics, mouseX, mouseY, partialTick);
     }
 
@@ -616,6 +701,35 @@ public class ShowBlockScreen extends Screen {
     }
 
 
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0) {
+            int s = slotAt((int) mouseX, (int) mouseY);
+            if (s >= 0) {
+                selectedHotbarSlot = (selectedHotbarSlot == s) ? -1 : s;
+                return true;
+            }
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    //物品栏热键栏渲染与选中 hotbar rendering and selection (vanilla geometry)
+    private int hotbarX() { return (this.width - 182) / 2; }
+    private int hotbarY() { return this.height - 22; }
+    private int slotAt(int mx, int my) {
+        int hx = hotbarX(), hy = hotbarY();
+        if (my < hy || my >= hy + 22) return -1;
+        int rel = mx - hx;
+        if (rel < 0 || rel >= 182) return -1;
+        return rel / 20;
+    }
+    private BlockState liveSlotBlockState(int idx) {
+        if (this.minecraft == null || this.minecraft.player == null) return null;
+        ItemStack st = this.minecraft.player.getInventory().getItem(idx);
+        if (st.getItem() instanceof BlockItem bi) return bi.getBlock().defaultBlockState();
+        return null;
+    }
 
     @Override
     public void removed() {

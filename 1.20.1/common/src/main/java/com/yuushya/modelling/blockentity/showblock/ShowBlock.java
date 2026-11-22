@@ -38,7 +38,14 @@ public class ShowBlock extends AbstractYuushyaBlock implements EntityBlock {
             if(context.isHoldingItem(BuiltInRegistries.ITEM.get(new ResourceLocation(Yuushya.MOD_ID,"gui_item")))){
                 ShowBlockEntity blockEntity = (ShowBlockEntity) level.getBlockEntity(pos);
                 if(blockEntity!=null) {
-                    blockEntity.setShowFrame();
+                    blockEntity.setShowFrame();  // yellow outline
+                }
+            }
+            else if(context.isHoldingItem(BuiltInRegistries.ITEM.get(new ResourceLocation(Yuushya.MOD_ID,"destroy_item")))){
+                ShowBlockEntity blockEntity = (ShowBlockEntity) level.getBlockEntity(pos);
+                if(blockEntity!=null) {
+                    blockEntity.setShowFrame();  // yellow outline like the modelling GUI tool
+                    blockEntity.setShowText();
                 }
             }
             else if(context.isHoldingItem(BuiltInRegistries.ITEM.get(new ResourceLocation(Yuushya.MOD_ID,"rot_trans_item")))){
@@ -63,7 +70,6 @@ public class ShowBlock extends AbstractYuushyaBlock implements EntityBlock {
                     ||context.isHoldingItem(BuiltInRegistries.ITEM.get(new ResourceLocation(Yuushya.MOD_ID,"get_blockstate_item")))
                     ||context.isHoldingItem(BuiltInRegistries.ITEM.get(new ResourceLocation(Yuushya.MOD_ID,"scale_trans_item")))
                     ||context.isHoldingItem(BuiltInRegistries.ITEM.get(new ResourceLocation(Yuushya.MOD_ID,"debug_stick_item")))
-                    ||context.isHoldingItem(BuiltInRegistries.ITEM.get(new ResourceLocation(Yuushya.MOD_ID,"destroy_item")))
             ){
                 ShowBlockEntity blockEntity = (ShowBlockEntity) level.getBlockEntity(pos);
                 if(blockEntity!=null) blockEntity.setShowText();

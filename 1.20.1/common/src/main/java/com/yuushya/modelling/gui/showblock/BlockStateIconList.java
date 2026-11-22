@@ -37,7 +37,6 @@ public class BlockStateIconList extends ObjectSelectionList<BlockStateIconList.E
 
     //private static final Logger LOGGER = LogUtils.getLogger();
     protected final List<TransformData> transformDataList;
-    protected final List<Entry> chosen = new ArrayList<>();
     protected final ShowBlockScreen screen;
     private int itemHeight;
     private int itemWidth;
@@ -103,15 +102,17 @@ public class BlockStateIconList extends ObjectSelectionList<BlockStateIconList.E
         this.notifyListUpdated();
     }
 
-    public void addSlot(){
+    public boolean addSlot(){
         if( this.getSelected()!= null && transformDataList.get(this.getSelected().slot).blockState.getBlock() == Blocks.AIR){
-            return;
+            return false;
         }
         if(children().size() == transformDataList.size()){
             Entry entry = new Entry(this,transformDataList.size());
             this.addEntry(entry);
             this.setSelected(entry);
+            return true;
         }
+        return false;
     }
 
     private void notifyListUpdated() {
@@ -130,32 +131,11 @@ public class BlockStateIconList extends ObjectSelectionList<BlockStateIconList.E
     }
 
 
-    public int getChosenOne(){
-        if(!this.chosen.isEmpty()){
-            return chosen.get(chosen.size()-1).slot;
-        }
-        return -1;
-    }
-    public void setChosenCurrent() {
-        Entry selected = this.getSelected();
-        if(selected!=null){
-            selected.chosen = true;
-            this.chosen.add(selected);
-        }
-    }
-    public void clearChosen(){
-        for(Entry entry:this.chosen){
-            entry.chosen = false;
-        }
-        this.chosen.clear();
-    }
-
     public static final class Entry extends ObjectSelectionList.Entry<Entry>{
 
         private final BlockStateIconList parent;
         private final int slot;
         private final Minecraft minecraft;
-        private boolean chosen = false;
         public TransformData getTransformData(){
             return (parent.transformDataList.size() > slot)? parent.transformDataList.get(slot) : new TransformData();
         }
@@ -183,19 +163,7 @@ public class BlockStateIconList extends ObjectSelectionList<BlockStateIconList.E
 
         @Override
         public boolean mouseClicked(double mouseX, double mouseY, int button) {
-            Entry preSelected = this.parent.getSelected();
             this.parent.setSelected(this);
-            if(preSelected == this){
-                if(this.chosen){
-                    this.chosen = false;
-                    this.parent.chosen.remove(this);
-                }
-                else{
-                    this.chosen = true;
-                    this.parent.chosen.add(this);
-                }
-            }
-            //LOGGER.info("select "+this.slot);
             return true;
         }
 
@@ -217,8 +185,6 @@ public class BlockStateIconList extends ObjectSelectionList<BlockStateIconList.E
 //            }
             if(updateRenderShown())
                 guiGraphics.fill(left, top, left + 32 + 4, top + fontHeight + 32, -1601138544);
-            if(chosen)
-                guiGraphics.fill(left, top, left + 32 + 4, top + fontHeight + 32, 0x5FD85C2F);
             guiGraphics.pose().pushPose();
             guiGraphics.pose().translate(left + 16, top  + 16, 32);
             guiGraphics.pose().scale(32.0f, 32.0f, 32.0f);

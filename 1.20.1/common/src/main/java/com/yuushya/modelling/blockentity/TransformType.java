@@ -16,7 +16,8 @@ public enum TransformType {
     SUCCESS(13), FAIL(14),
     REMOVE_SLOT(15),
     ADD_CONSUME_OFFHAND(16),
-    REPLACE_EXCHANGE_OFFHAND(17);
+    REPLACE_EXCHANGE_OFFHAND(17),
+    DUPLICATE_SLOT(18);
 
     public final int type;
 
@@ -43,6 +44,7 @@ public enum TransformType {
             case 15 -> REMOVE_SLOT;
             case 16 -> ADD_CONSUME_OFFHAND;
             case 17 -> REPLACE_EXCHANGE_OFFHAND;
+            case 18 -> DUPLICATE_SLOT;
             default -> FAIL;
         };
     }
@@ -61,7 +63,7 @@ public enum TransformType {
             case SCALE_Z -> transformData.scales.z();
             case BLOCK_STATE -> Block.getId(transformData.blockState);
             case SHOWN -> transformData.isShown ? 1 : 0;
-            case LIT, REMOVE, SUCCESS, FAIL, REMOVE_SLOT, ADD_CONSUME_OFFHAND, REPLACE_EXCHANGE_OFFHAND -> 0;
+            case LIT, REMOVE, SUCCESS, FAIL, REMOVE_SLOT, ADD_CONSUME_OFFHAND, REPLACE_EXCHANGE_OFFHAND, DUPLICATE_SLOT -> 0;
         };
     }
 
@@ -122,6 +124,10 @@ public enum TransformType {
         if(this == REPLACE_EXCHANGE_OFFHAND){
             showBlockEntity.setSlot(slot);
             showBlockEntity.getTransformData(slot).blockState = Block.stateById((int) Math.round(number));
+            return;
+        }
+        //复制层由数据包处理器在服务端完成（含消耗）;客户端已本地追加 duplicate is completed on the server by the packet handler (with charging); the client already appended locally
+        if(this == DUPLICATE_SLOT){
             return;
         }
         showBlockEntity.setSlot(slot);

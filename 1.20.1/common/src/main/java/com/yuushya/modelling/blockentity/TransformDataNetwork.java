@@ -11,13 +11,16 @@ import dev.architectury.networking.NetworkManager;
 import io.netty.buffer.Unpooled;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.AirBlock;
 import net.minecraft.world.level.block.Block;
@@ -38,7 +41,8 @@ public class TransformDataNetwork {
             BlockPos blockPos,
             TransformType transformType,
             int slot,
-            double number
+            double number,
+            int invSlot
     ){
         //buf -> pack
         public static TransformDataOncePacket decoder(FriendlyByteBuf buf){
@@ -46,7 +50,8 @@ public class TransformDataNetwork {
                     buf.readBlockPos(),
                     TransformType.from(buf.readByte()),
                     buf.readByte(),
-                    buf.readDouble()
+                    buf.readDouble(),
+                    buf.readByte()
             );
         }
 
@@ -56,6 +61,7 @@ public class TransformDataNetwork {
             buf.writeByte(transformType.type);
             buf.writeByte(slot);
             buf.writeDouble(number);
+            buf.writeByte(invSlot);
         }
 
         //after receive
@@ -67,40 +73,93 @@ public class TransformDataNetwork {
                         BlockEntity blockEntity = serverLevel.getBlockEntity(blockPos);
                         if (!(blockEntity instanceof ShowBlockEntity showBlockEntity)) {return;}
                         Player player = ctx.get().getPlayer();
+                        //复制层：服务端 authoritative — 有需求物品时消耗，否则拒绝 duplicate layer: server-authoritative charging; refuse if the required item is missing in survival
+                        if (transformType == TransformType.DUPLICATE_SLOT) {
+                            TransformData sourceData = showBlockEntity.getTransformData(slot);
+                            BlockState srcState = sourceData.blockState;
+                            if (!player.isCreative() && !(srcState.getBlock() instanceof AirBlock)) {
+                                Item required = srcState.getBlock().asItem();
+                                if (required != Items.AIR && !consumeFromInventory(player, required)) {
+                                    player.displayClientMessage(
+                                            Component.literal("Need ").append(required.getDefaultInstance().getHoverName())
+                                                    .append(Component.literal(" to duplicate")), false);
+                                    return;
+                                }
+                            }
+                            TransformData copy = new TransformData();
+                            copy.set(sourceData);
+                            showBlockEntity.getTransformDatas().add(copy);
+                            return;
+                        }
                         //删除层时把该层的方块还给非创造模式玩家 return the layer's block to non-creative players
                         if (transformType == TransformType.REMOVE_SLOT && !player.isCreative()) {
                             BlockState removedState = showBlockEntity.getTransformData(slot).blockState;
                             if (!(removedState.getBlock() instanceof AirBlock)) {
                                 ItemStack stack = new ItemStack(removedState.getBlock().asItem());
-                                giveBackToOffhandOrInventory(player, stack);
+                                if (invSlot >= 0) {
+                                    giveBackToSlotOrInventory(player, invSlot, stack);
+                                } else {
+                                    giveBackToOffhandOrInventory(player, stack);
+                                }
                             }
                         }
-                        //从副手新增层时消耗副手里对应的方块 consume the matching offhand block when a layer is added from it
+                        //从副手/选中物品栏新增层时消耗对应的方块 consume the matching block when a layer is added from the offhand or a selected hotbar slot
                         if (transformType == TransformType.ADD_CONSUME_OFFHAND && !player.isCreative()) {
-                            ItemStack offhand = player.getOffhandItem();
-                            if (offhand.getItem() instanceof BlockItem blockItem
-                                    && blockItem.getBlock() == Block.stateById((int) Math.round(number)).getBlock()) {
-                                offhand.shrink(1);
+                            BlockState targetState = Block.stateById((int) Math.round(number));
+                            if (invSlot >= 0) {
+                                if (invSlot < 9) {
+                                    ItemStack st = player.getInventory().getItem(invSlot);
+                                    if (st.getItem() instanceof BlockItem blockItem
+                                            && blockItem.getBlock() == targetState.getBlock()) {
+                                        st.shrink(1);
+                                    }
+                                }
+                            } else {
+                                ItemStack offhand = player.getOffhandItem();
+                                if (offhand.getItem() instanceof BlockItem blockItem
+                                        && blockItem.getBlock() == targetState.getBlock()) {
+                                    offhand.shrink(1);
+                                }
                             }
                         }
-                        //用副手方块替换当前层：归还旧方块并消耗副手方块（新方块状态由 modify 原子应用）
-                        //空手替换为空气时同样归还旧方块，但不消耗任何物品
-                        //replace the current layer with the offhand block: hand the old block back and consume
-                        //the offhand one (the new blockstate itself is applied atomically by modify below).
-                        //an empty-hand replace (target = air) returns the old block without consuming anything
+                        //用副手/选中物品栏方块替换当前层：归还旧方块并消耗新方块（新方块状态由 modify 原子应用）
+                        //空手/空槽替换为空气时同样归还旧方块，但不消耗任何物品
+                        //replace the current layer with the offhand/selected-slot block: hand the old block back and consume
+                        //the new one (the new blockstate itself is applied atomically by modify below).
+                        //an empty-hand/empty-slot replace (target = air) returns the old block without consuming anything
                         if (transformType == TransformType.REPLACE_EXCHANGE_OFFHAND && !player.isCreative()) {
                             BlockState newState = Block.stateById((int) Math.round(number));
                             boolean targetIsAir = newState.getBlock() instanceof AirBlock;
-                            ItemStack offhand = player.getOffhandItem();
-                            if (targetIsAir || (offhand.getItem() instanceof BlockItem blockItem
-                                    && blockItem.getBlock() == newState.getBlock())) {
-                                if (!targetIsAir) {
-                                    offhand.shrink(1);
+                            if (invSlot >= 0) {
+                                if (invSlot < 9) {
+                                    ItemStack slotStack = player.getInventory().getItem(invSlot);
+                                    boolean ok = targetIsAir || (slotStack.getItem() instanceof BlockItem blockItem
+                                            && blockItem.getBlock() == newState.getBlock());
+                                    if (ok) {
+                                        if (!targetIsAir) {
+                                            slotStack.shrink(1);
+                                        }
+                                        BlockState oldState = showBlockEntity.getTransformData(slot).blockState;
+                                        if (!(oldState.getBlock() instanceof AirBlock)) {
+                                            if (invSlot >= 0) {
+                                                giveBackToSlotOrInventory(player, invSlot, new ItemStack(oldState.getBlock().asItem()));
+                                            } else {
+                                                giveBackToOffhandOrInventory(player, new ItemStack(oldState.getBlock().asItem()));
+                                            }
+                                        }
+                                    }
                                 }
-                                BlockState oldState = showBlockEntity.getTransformData(slot).blockState;
-                                if (!(oldState.getBlock() instanceof AirBlock)) {
-                                    ItemStack stack = new ItemStack(oldState.getBlock().asItem());
-                                    giveBackToOffhandOrInventory(player, stack);
+                            } else {
+                                ItemStack offhand = player.getOffhandItem();
+                                if (targetIsAir || (offhand.getItem() instanceof BlockItem blockItem
+                                        && blockItem.getBlock() == newState.getBlock())) {
+                                    if (!targetIsAir) {
+                                        offhand.shrink(1);
+                                    }
+                                    BlockState oldState = showBlockEntity.getTransformData(slot).blockState;
+                                    if (!(oldState.getBlock() instanceof AirBlock)) {
+                                        giveBackToOffhandOrInventory(player, new ItemStack(oldState.getBlock().asItem()));
+                                    }
                                 }
                             }
                         }
@@ -141,6 +200,42 @@ public class TransformDataNetwork {
         if(!stack.isEmpty()){
             player.getInventory().placeItemBackInInventory(stack);
         }
+    }
+
+    //把物品优先还给指定的物品栏槽位（热键栏），槽位满/不同物时余量回主物品栏
+    //give the item back to a specific hotbar slot first; remainder goes to the main inventory if the slot is full or holds a different item
+    public static void giveBackToSlotOrInventory(Player player, int hotbarSlot, ItemStack stack){
+        if(stack.isEmpty()){ return; }
+        if(hotbarSlot >= 0 && hotbarSlot < 9){
+            ItemStack target = player.getInventory().getItem(hotbarSlot);
+            if(target.isEmpty()){
+                player.getInventory().setItem(hotbarSlot, stack);
+                return;
+            }
+            if(ItemStack.isSameItemSameTags(target, stack)){
+                int space = target.getMaxStackSize() - target.getCount();
+                if(space > 0){
+                    int moved = Math.min(space, stack.getCount());
+                    target.grow(moved);
+                    stack.shrink(moved);
+                }
+            }
+        }
+        if(!stack.isEmpty()){
+            player.getInventory().placeItemBackInInventory(stack);
+        }
+    }
+
+    //从主物品栏（含热键栏）消耗一个指定物品，找到就 shrink 并返回 true
+    //consume one of the given item from the main inventory (including the hotbar); returns true on success
+    public static boolean consumeFromInventory(Player player, Item item){
+        for(ItemStack st : player.getInventory().items){
+            if(!st.isEmpty() && st.getItem() == item){
+                st.shrink(1);
+                return true;
+            }
+        }
+        return false;
     }
 
     //应用共享码：服务端权威结算（扣背包、回收旧层、建层、报告缺失） apply a share code: authoritative settlement on the server (consume inventory, recycle old layers, build, report missing)
@@ -196,7 +291,10 @@ public class TransformDataNetwork {
     }
 
     public static void sendToServerSide(BlockPos blockPos, int slot, TransformType type, double number) {
-        INSTANCE.sendToServer(new TransformDataOncePacket(blockPos,type,slot,number));
+        sendToServerSide(blockPos, slot, type, number, -1);
+    }
+    public static void sendToServerSide(BlockPos blockPos, int slot, TransformType type, double number, int invSlot) {
+        INSTANCE.sendToServer(new TransformDataOncePacket(blockPos,type,slot,number,invSlot));
     }
 
     public static void sendToServerSideSuccess(BlockPos blockPos){
@@ -211,7 +309,7 @@ public class TransformDataNetwork {
     //architectury提供的另一种风格的api
     public static void sendToServerSideLegacy(BlockPos blockPos, int slot, TransformType type, double number){
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
-        new TransformDataOncePacket(blockPos,type,slot,number).encoder(buf);
+        new TransformDataOncePacket(blockPos,type,slot,number,-1).encoder(buf);
         NetworkManager.sendToServer(TRANSFORM_DATA_PACKET_ID,buf);
     }
 
