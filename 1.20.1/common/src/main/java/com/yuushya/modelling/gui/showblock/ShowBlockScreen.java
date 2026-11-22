@@ -604,6 +604,10 @@ public class ShowBlockScreen extends Screen {
         for(TransformComponent component:this.panel.values()){
             component.editBox.tick();
         }
+        //承载方块被摧毁（如删除最后一层）后自动关闭界面 close the screen once the backing block is destroyed
+        if (blockEntity.isRemoved()) {
+            this.onClose();
+        }
     }
 
     @Override
@@ -647,8 +651,34 @@ public class ShowBlockScreen extends Screen {
     }
 
     private void updateTransformData(TransformType type, Double number){
+        //渲染时方块中心 = 0.5 + scale*pos/16，改缩放会拖动带偏移的方块；先记下旧缩放，
+        //改完后补偿 pos（pos' = pos*oldScale/newScale）并一并同步给服务端，让方块原地缩放。
+        //the rendered center is 0.5 + scale*pos/16, so scaling would drag an offset block along;
+        //record the old scale, compensate pos afterwards and sync it alongside the new scale so
+        //the block resizes in place. the server applies both values as plain setters (no
+        //compensation there), so packet order can never double-compensate.
+        boolean scaling = type == SCALE_X || type == SCALE_Y || type == SCALE_Z;
+        double oldScale = 1.0;
+        if (scaling) {
+            var scales = blockEntity.getTransformData(slot).scales;
+            oldScale = switch (type) {
+                case SCALE_X -> scales.x();
+                case SCALE_Y -> scales.y();
+                default -> scales.z();
+            };
+        }
         this.storage.put(type,number);
         type.modify(blockEntity,slot,number);
+        if (scaling && oldScale != 0 && number != 0) {
+            TransformType posType = switch (type) {
+                case SCALE_X -> POS_X;
+                case SCALE_Y -> POS_Y;
+                default -> POS_Z;
+            };
+            double newPos = posType.extract(blockEntity, slot) * oldScale / number;
+            this.storage.put(posType, newPos);
+            posType.modify(blockEntity, slot, newPos);
+        }
         this.blockEntity.getLevel().sendBlockUpdated(blockEntity.getBlockPos(), blockEntity.getBlockState(), blockEntity.getBlockState(), Block.UPDATE_ALL_IMMEDIATE);
     }
 

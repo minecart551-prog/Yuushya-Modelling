@@ -18,8 +18,9 @@ import org.joml.Vector3f;
 import java.util.function.Consumer;
 
 public class PosTransItem extends AbstractMultiPurposeToolItem {
+    //可调整的最大位移距离为原来的三倍 the maximum adjustable xyz distance is three times the original one
     public static double getMaxPos(double scale){
-        return (scale < 1) ? Math.ceil((8 + 16)/scale) - 8 : Math.ceil(16/scale);
+        return 3 * ((scale < 1) ? Math.ceil((8 + 16)/scale) - 8 : Math.ceil(16/scale));
     }
     public static double getStep(double max){
         return (max<16) ? max / 16.0 : 1.0;

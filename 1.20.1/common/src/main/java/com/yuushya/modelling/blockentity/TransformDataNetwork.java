@@ -104,6 +104,13 @@ public class TransformDataNetwork {
                                 }
                             }
                         }
+                        //删除最后一层时直接摧毁整个展示方块，而不是留下一个空壳
+                        //taking out the last layer destroys the show block instead of leaving an empty one;
+                        //the layer's block was already returned above, so drop nothing here
+                        if (transformType == TransformType.REMOVE_SLOT && showBlockEntity.size() <= 1) {
+                            serverLevel.destroyBlock(blockPos, false);
+                            return;
+                        }
                         transformType.modify(showBlockEntity,slot,number);
                     }
                 }

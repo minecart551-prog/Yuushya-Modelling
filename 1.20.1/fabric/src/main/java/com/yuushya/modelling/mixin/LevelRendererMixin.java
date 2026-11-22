@@ -23,8 +23,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * modified blocks no longer flashes outlines everywhere.
  *
  * <p>The outline is only drawn while the player holds one of the modelling tools:
- * the Gourd of Entitilization or the Modelling GUI tool. Every other case falls back to
- * vanilla behaviour (outline hidden), and non-show blocks are left completely untouched.
+ * the Gourd of Entitilization, the Modelling GUI tool, or the Silk Touch Hammer.
+ * Every other case falls back to vanilla behaviour (outline hidden), and non-show blocks
+ * are left completely untouched.
  */
 @Mixin(LevelRenderer.class)
 public class LevelRendererMixin {
@@ -37,8 +38,10 @@ public class LevelRendererMixin {
         // The entity passed in is the camera entity (the player in normal play).
         if (!(entity instanceof Player player)) return;
 
-        // Draw the outline only while holding the Gourd of Entitilization or the Modelling GUI tool.
-        if (player.isHolding(item("get_showblock_item")) || player.isHolding(item("gui_item"))) return;
+        // Draw the outline only while holding the Gourd of Entitilization, the Modelling GUI
+        // tool, or the Silk Touch Hammer (same hover-outline behaviour as the GUI tool).
+        if (player.isHolding(item("get_showblock_item")) || player.isHolding(item("gui_item"))
+                || player.isHolding(item("destroy_item"))) return;
 
         ci.cancel();
     }
