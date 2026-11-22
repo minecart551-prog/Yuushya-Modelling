@@ -103,7 +103,10 @@ public class BlockStateIconList extends ObjectSelectionList<BlockStateIconList.E
     }
 
     public boolean addSlot(){
-        if( this.getSelected()!= null && transformDataList.get(this.getSelected().slot).blockState.getBlock() == Blocks.AIR){
+        //bounds-safe air check: the selected entry's slot may be stale after list mutations
+        Entry sel = this.getSelected();
+        if (sel != null && sel.slot >= 0 && sel.slot < transformDataList.size()
+                && transformDataList.get(sel.slot).blockState.getBlock() == Blocks.AIR) {
             return false;
         }
         if(children().size() == transformDataList.size()){
@@ -119,6 +122,7 @@ public class BlockStateIconList extends ObjectSelectionList<BlockStateIconList.E
     }
 
     public void setSelectedSlot(int slot){
+        if (slot < 0 || slot >= this.children().size()) return;
         this.setSelected(this.children().get(slot));
     }
 
