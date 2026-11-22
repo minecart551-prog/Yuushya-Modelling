@@ -42,6 +42,10 @@ public class ShowBlockEntity extends BlockEntity implements ITransformDataInvent
     public void consumeShowFrame(){
         showFrame = showFrame< 0? 0: showFrame -1;
     }
+    //GUI 选中层时高亮该层中心 (highlight the selected layer's center while the GUI is open)
+    private boolean showSelectedCenter = false;
+    public boolean showSelectedCenter(){ return showSelectedCenter; }
+    public void setShowSelectedCenter(boolean v){ showSelectedCenter = v; }
     //显示旋转的坐标轴
     private Integer showRotAxis =0;
     public boolean showRotAxis(){return showRotAxis >0;}

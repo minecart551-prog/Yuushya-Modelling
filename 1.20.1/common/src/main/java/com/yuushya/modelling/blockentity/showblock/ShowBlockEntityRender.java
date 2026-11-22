@@ -45,6 +45,44 @@ public class ShowBlockEntityRender implements BlockEntityRenderer<ShowBlockEntit
             LevelRenderer.renderLineBox(matrixStack, vertexConsumer, -0.01,-0.01,-0.01,1.01,1.01,1.01, 1.0F, 1.0F, 0.0F, 1.0F, 1.0F, 1.0F, 0.0F);
             blockEntity.consumeShowFrame();
         }
+        //GUI 选中层时在该层中心画一个小十字 (highlight the selected layer's center while the GUI is open)
+        if(blockEntity.showSelectedCenter()){
+            TransformData transformData = blockEntity.getTransFormDataNow();
+            if(transformData.isShown){
+                matrixStack.pushPose();{
+                    Direction facing = blockEntity.getBlockState().getValue(HORIZONTAL_FACING);
+                    float f = facing.toYRot();
+                    matrixStack.translate(0.5f, 0.5f, 0.5f);
+                    matrixStack.mulPose(Axis.YP.rotationDegrees(-f));
+                    matrixStack.translate(-0.5f, -0.5f, -0.5f);
+                    Tesselator tesselator = Tesselator.getInstance();
+                    BufferBuilder bufferBuilder = tesselator.getBuilder();
+                    RenderSystem.setShader(GameRenderer::getRendertypeLinesShader);
+                    RenderSystem.depthMask(true);
+                    RenderSystem.disableCull();
+                    RenderSystem.enableBlend();
+                    RenderSystem.defaultBlendFunc();
+                    RenderSystem.lineWidth(4.0f);
+                    bufferBuilder.begin(VertexFormat.Mode.LINES, DefaultVertexFormat.POSITION_COLOR_NORMAL);
+                    translateAfterScale(matrixStack,transformData.pos,transformData.scales);
+                    translate(matrixStack,MIDDLE);
+                    float r = 0.4f;
+                    //X axis (red)
+                    bufferBuilder.vertex(matrixStack.last().pose(),-r,0f,0f).color(0xFFE65A46).normal(1f,0f,0f).endVertex();
+                    bufferBuilder.vertex(matrixStack.last().pose(), r,0f,0f).color(0xFFE65A46).normal(1f,0f,0f).endVertex();
+                    //Y axis (green)
+                    bufferBuilder.vertex(matrixStack.last().pose(),0f,-r,0f).color(0xFFA0DC5A).normal(0f,1f,0f).endVertex();
+                    bufferBuilder.vertex(matrixStack.last().pose(),0f, r,0f).color(0xFFA0DC5A).normal(0f,1f,0f).endVertex();
+                    //Z axis (blue)
+                    bufferBuilder.vertex(matrixStack.last().pose(),0f,0f,-r).color(0xFF5AB4DC).normal(0f,0f,1f).endVertex();
+                    bufferBuilder.vertex(matrixStack.last().pose(),0f,0f, r).color(0xFF5AB4DC).normal(0f,0f,1f).endVertex();
+                    tesselator.end();
+                    RenderSystem.depthMask(true);
+                    RenderSystem.disableBlend();
+                    RenderSystem.enableCull();
+                }matrixStack.popPose();
+            }
+        }
         if(blockEntity.showRotAxis()||blockEntity.showPosAxis()|| blockEntity.showText()){
             TransformData transformData = blockEntity.getTransFormDataNow();
             if(transformData.isShown&&(blockEntity.showPosAxis()||blockEntity.showRotAxis())){

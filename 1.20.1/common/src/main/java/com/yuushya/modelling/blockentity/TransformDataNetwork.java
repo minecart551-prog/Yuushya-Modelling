@@ -14,7 +14,6 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
@@ -99,26 +98,18 @@ public class TransformDataNetwork {
                                 if (invSlot >= 0) {
                                     giveBackToSlotOrInventory(player, invSlot, stack);
                                 } else {
-                                    giveBackToOffhandOrInventory(player, stack);
+                                    giveBackToInventory(player, stack);
                                 }
                             }
                         }
-                        //从副手/选中物品栏新增层时消耗对应的方块 consume the matching block when a layer is added from the offhand or a selected hotbar slot
+                        //从选中物品栏新增层时消耗对应的方块 consume the matching block when a layer is added from a selected hotbar slot
                         if (transformType == TransformType.ADD_CONSUME_OFFHAND && !player.isCreative()) {
                             BlockState targetState = Block.stateById((int) Math.round(number));
-                            if (invSlot >= 0) {
-                                if (invSlot < 9) {
-                                    ItemStack st = player.getInventory().getItem(invSlot);
-                                    if (st.getItem() instanceof BlockItem blockItem
-                                            && blockItem.getBlock() == targetState.getBlock()) {
-                                        st.shrink(1);
-                                    }
-                                }
-                            } else {
-                                ItemStack offhand = player.getOffhandItem();
-                                if (offhand.getItem() instanceof BlockItem blockItem
+                            if (invSlot >= 0 && invSlot < 9) {
+                                ItemStack st = player.getInventory().getItem(invSlot);
+                                if (st.getItem() instanceof BlockItem blockItem
                                         && blockItem.getBlock() == targetState.getBlock()) {
-                                    offhand.shrink(1);
+                                    st.shrink(1);
                                 }
                             }
                         }
@@ -141,25 +132,15 @@ public class TransformDataNetwork {
                                         }
                                         BlockState oldState = showBlockEntity.getTransformData(slot).blockState;
                                         if (!(oldState.getBlock() instanceof AirBlock)) {
-                                            if (invSlot >= 0) {
-                                                giveBackToSlotOrInventory(player, invSlot, new ItemStack(oldState.getBlock().asItem()));
-                                            } else {
-                                                giveBackToOffhandOrInventory(player, new ItemStack(oldState.getBlock().asItem()));
-                                            }
+                                            giveBackToSlotOrInventory(player, invSlot, new ItemStack(oldState.getBlock().asItem()));
                                         }
                                     }
                                 }
-                            } else {
-                                ItemStack offhand = player.getOffhandItem();
-                                if (targetIsAir || (offhand.getItem() instanceof BlockItem blockItem
-                                        && blockItem.getBlock() == newState.getBlock())) {
-                                    if (!targetIsAir) {
-                                        offhand.shrink(1);
-                                    }
-                                    BlockState oldState = showBlockEntity.getTransformData(slot).blockState;
-                                    if (!(oldState.getBlock() instanceof AirBlock)) {
-                                        giveBackToOffhandOrInventory(player, new ItemStack(oldState.getBlock().asItem()));
-                                    }
+                            } else if (targetIsAir) {
+                                //无选中槽位：替换为空气并把旧方块返还到背包 (no selected slot: replace with air and return the old block to the inventory)
+                                BlockState oldState = showBlockEntity.getTransformData(slot).blockState;
+                                if (!(oldState.getBlock() instanceof AirBlock)) {
+                                    giveBackToInventory(player, new ItemStack(oldState.getBlock().asItem()));
                                 }
                             }
                         }
@@ -178,28 +159,11 @@ public class TransformDataNetwork {
     }
 
 
-    //归还物品时优先放入副手，副手满或不同物时才回主物品栏 return items to the offhand first; fall back to the main inventory only when the offhand is full or holds a different item
-    public static void giveBackToOffhandOrInventory(Player player, ItemStack stack){
+    //归还物品到主物品栏（不再使用副手） return items to the main inventory (no offhand usage)
+    public static void giveBackToInventory(Player player, ItemStack stack){
         if(stack.isEmpty()){ return; }
-        ItemStack offhand = player.getOffhandItem();
-        if(offhand.isEmpty()){
-            //副手为空：直接占用副手 the offhand is empty: take it
-            player.setItemInHand(InteractionHand.OFF_HAND, stack);
-            return;
-        }
-        if(ItemStack.isSameItemSameTags(offhand, stack)){
-            //同种物品且未满：并入副手 merge into the offhand when it's the same item and not full
-            int space = offhand.getMaxStackSize() - offhand.getCount();
-            if(space > 0){
-                int moved = Math.min(space, stack.getCount());
-                offhand.grow(moved);
-                stack.shrink(moved);
-            }
-        }
-        //副手已满/不同物：余量回主物品栏 whatever remains goes to the main inventory
-        if(!stack.isEmpty()){
-            player.getInventory().placeItemBackInInventory(stack);
-        }
+        //不再使用副手，直接回主物品栏 (no offhand usage: return directly to the main inventory)
+        player.getInventory().placeItemBackInInventory(stack);
     }
 
     //把物品优先还给指定的物品栏槽位（热键栏），槽位满/不同物时余量回主物品栏
@@ -270,7 +234,7 @@ public class TransformDataNetwork {
         //资源池剩余归还（副手优先） return whatever is left in the pool (offhand first)
         if(!creative){
             for(Map.Entry<Item, Integer> e : result.leftover().entrySet()){
-                if(e.getValue() > 0) giveBackToOffhandOrInventory(player, new ItemStack(e.getKey(), e.getValue()));
+                if(e.getValue() > 0) giveBackToInventory(player, new ItemStack(e.getKey(), e.getValue()));
             }
         }
         //重建层列表 rebuild the layer list

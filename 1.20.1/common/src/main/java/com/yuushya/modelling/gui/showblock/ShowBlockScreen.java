@@ -49,8 +49,6 @@ import static com.yuushya.modelling.item.showblocktool.PosTransItem.getStep;
 public class ShowBlockScreen extends Screen {
     private final ShowBlockEntity blockEntity;
     private final BlockState newBlockState;
-    //副手里是否为真实方块（而非复制状态的工具）whether the offhand holds a real block item (not the copy-state tool)
-    private final boolean offhandConsumable;
     private int slot;
     //当前选中的物品栏槽位（-1 表示未选中，使用副手） the currently selected inventory hotbar slot (-1 = none, use offhand)
     private int selectedHotbarSlot = -1;
@@ -185,24 +183,14 @@ public class ShowBlockScreen extends Screen {
         return blockEntity.getTransformData(slot).blockState;
     }
 
-    public ShowBlockScreen(ShowBlockEntity blockEntity, BlockState newBlockState, boolean offhandConsumable) {
+    public ShowBlockScreen(ShowBlockEntity blockEntity, BlockState newBlockState) {
         super(GameNarrator.NO_TITLE);
         this.blockEntity = blockEntity;
         this.newBlockState = newBlockState;
-        this.offhandConsumable = offhandConsumable;
+        blockEntity.setShowSelectedCenter(true);
         if(blockEntity.getSlot() < blockEntity.getTransformDatas().size()){
             this.slot = blockEntity.getSlot();
         }
-    }
-
-    //点击时实时读取副手，而非 GUI 打开时的快照（快照在消耗后会过期） read the offhand live at click time rather than the GUI-open snapshot (which goes stale after a consume)
-    private BlockState liveOffhandBlockState(){
-        if(this.minecraft == null || this.minecraft.player == null) return null;
-        ItemStack off = this.minecraft.player.getOffhandItem();
-        if(off.getItem() instanceof BlockItem item){
-            return item.getBlock().defaultBlockState();
-        }
-        return null;
     }
 
     private int leftColumnX(){ return this.width/4*3 + 10; }
@@ -242,19 +230,16 @@ public class ShowBlockScreen extends Screen {
                                 updateStateButtonVisible(true);
                             }
                             else if(this.newBlockState!=null){
-                                //副手来源须在点击时仍持有该方块，否则不新增（快照过期会凭空新增） an offhand-sourced block must still be held at click time, else don't add (a stale snapshot would add for free)
-                                BlockState add = offhandConsumable ? liveOffhandBlockState() : this.newBlockState;
+                                //复制状态/手持方块：直接新增，不消耗（不再使用副手） copy-state tool / held block: add directly without consuming (no offhand usage)
+                                BlockState add = this.newBlockState;
                                 if(add == null){
-                                    return; //副手已空：不凭旧快照新增 the offhand is empty: don't add from the stale snapshot
+                                    return;
                                 }
                                 if(!blockStateList.addSlot()){
                                     return;
                                 }
                                 updateTransformData(BLOCK_STATE,(double) Block.getId(add));
                                 updateTransformData(SHOWN,1.0);
-                                if(offhandConsumable){
-                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, ADD_CONSUME_OFFHAND, (double) Block.getId(add));
-                                }
                                 updateStateButtonVisible(true);
                             }
                         })
@@ -339,20 +324,6 @@ public class ShowBlockScreen extends Screen {
                                 }
                                 updateStateButtonVisible(true);
                             }
-                            else if(offhandConsumable){
-                                //点击时实时读取副手，快照可能已过期（方块已被消耗） read the offhand live at click time; the snapshot may be stale (block already consumed)
-                                BlockState live = liveOffhandBlockState();
-                                if(live == null){
-                                    //副手已空：视为空手替换，换成空气并收回原方块 offhand now empty: treat as an empty-hand replace, swap to air and return the old block
-                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, 0.0);
-                                    updateTransformData(BLOCK_STATE,0.0);
-                                }
-                                else{
-                                    TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, (double) Block.getId(live));
-                                    updateTransformData(BLOCK_STATE,(double) Block.getId(live));
-                                }
-                                updateStateButtonVisible(true);
-                            }
                             else if(this.newBlockState==null){
                                 //空手打开 GUI：替换为空气并收回原方块 GUI opened with an empty hand: replace to air and return the old block
                                 TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(), slot, REPLACE_EXCHANGE_OFFHAND, 0.0);
@@ -406,7 +377,7 @@ public class ShowBlockScreen extends Screen {
                                         shareInformation, blockEntity.getTransformDatas(), this.minecraft.player, creative);
                                 if(!creative && this.minecraft.player != null){
                                     for(var e : result.leftover().entrySet()){
-                                        if(e.getValue() > 0) TransformDataNetwork.giveBackToOffhandOrInventory(this.minecraft.player, new ItemStack(e.getKey(), e.getValue()));
+                                        if(e.getValue() > 0) TransformDataNetwork.giveBackToInventory(this.minecraft.player, new ItemStack(e.getKey(), e.getValue()));
                                     }
                                 }
                                 List<TransformData> dataList = blockEntity.getTransformDatas();
@@ -733,6 +704,7 @@ public class ShowBlockScreen extends Screen {
 
     @Override
     public void removed() {
+        blockEntity.setShowSelectedCenter(false);
         for(TransformType key:storage.keySet()){
             TransformDataNetwork.sendToServerSide(blockEntity.getBlockPos(),slot, key,storage.get(key));
         }
